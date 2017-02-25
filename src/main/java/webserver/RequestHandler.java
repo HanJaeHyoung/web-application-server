@@ -33,43 +33,49 @@ public class RequestHandler extends Thread {
     public void run() {
         log.debug("New Client Connect! Connected IP : {}, Port : {}", connection.getInetAddress(),
                 connection.getPort());
-        DataOutputStream dos = null;
-        byte[] body = null;
-        
+
         try (InputStream in = connection.getInputStream(); OutputStream out = connection.getOutputStream()) {
             // TODO 사용자 요청에 대한 처리는 이 곳에 구현하면 된다.
-        	
-        	String httpStatus = "200";
-        	boolean response = false;
-        	
-            dos = new DataOutputStream(out);            
-            String getReq = getRequestUrl(in);
-            
-            if("/".equals(getReq.trim())){
-            	body = "Hello World".getBytes();
-            }           
-            
-            if(!"/".equals(getReq.trim())){
-            	try{
-            		body = Files.readAllBytes(new File("./webapp"+getReq).toPath());
-            	}catch(NoSuchFileException e){
-            		httpStatus = "302";
-            		responseXXXHeader(dos, 0, httpStatus);
-            		response = true;
-            	}
-            }
-                        
-            if(!response){
-	            responseXXXHeader(dos, body.length, httpStatus);
-	            responseBody(dos, body);
-            }
-            
+
+			requestUrlHandler(new DataOutputStream(out), in);
+
         } catch (IOException e) {
             log.error(e.getMessage());           
         }
     }
-    
-    @SuppressWarnings("deprecation")
+
+	private void requestUrlHandler(DataOutputStream dos, InputStream in) throws IOException {
+
+    	String httpStatus = "200";
+    	byte[] body = responseBodyMake(dos, in);
+		responseXXXHeader(dos, body.length, httpStatus);
+		responseBody(dos, body);
+
+	}
+
+	private byte[] responseBodyMake(DataOutputStream dos, InputStream in) throws IOException {
+
+		String getReq = getRequestUrl(in);
+		byte[] body = null;
+
+		if("/".equals(getReq.trim())){
+			body = "Hello World".getBytes();
+		}
+
+		if(!"/".equals(getReq.trim())){
+			try{
+				body = Files.readAllBytes(new File("./webapp"+getReq).toPath());
+			}catch(NoSuchFileException e){
+				String httpStatus = "302";
+				responseXXXHeader(dos, 0, httpStatus);
+				//response = true;
+			}
+		}
+
+		return body;
+	}
+
+	@SuppressWarnings("deprecation")
 	private User setUser(String url){
     	String id ="";    	
     	String pw ="";
@@ -131,7 +137,9 @@ public class RequestHandler extends Thread {
     private void setQueryStr(String reqUrl, String qs){
     	if(reqUrl.contains("user/create")){
     		DataBase.addUser(setUser(qs));
-    	}
+    	}else if(reqUrl.contains("user/login")){
+    		//isValidUser()
+		}
     }
     
     private String getRequestUrl(InputStream in) throws IOException{
@@ -170,19 +178,23 @@ public class RequestHandler extends Thread {
             log.error(e.getMessage());
         }
     }
-    
+
+	private void response302Header(DataOutputStream dos, int lengthOfBodyContent) {
+		try {
+			dos.writeBytes("HTTP/1.1 302 Found \r\n");
+			dos.writeBytes("Location: /index.html \r\n");
+			dos.writeBytes("\r\n");
+		} catch (IOException e) {
+			log.error(e.getMessage());
+		}
+	}
+
     private void responseXXXHeader(DataOutputStream dos, int lengthOfBodyContent, String httpStatus) {
-    	
+
     	if("200".equals(httpStatus)){
-    		response200Header( dos,  lengthOfBodyContent); 		
+    		response200Header( dos,  lengthOfBodyContent);
     	}else if("302".equals(httpStatus)){
-	        try {
-	            dos.writeBytes("HTTP/1.1 "+httpStatus+" Found \r\n");	          
-	            dos.writeBytes("Location: /index.html \r\n");
-	            dos.writeBytes("\r\n");
-	        } catch (IOException e) {
-	            log.error(e.getMessage());
-	        }
+			response302Header( dos,  lengthOfBodyContent);
     	}
     }
 
