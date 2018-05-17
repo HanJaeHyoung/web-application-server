@@ -1,24 +1,15 @@
 package webserver;
 
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.Socket;
-import java.net.URLDecoder;
 import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Map;
 
 import db.DataBase;
 import model.User;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import util.HttpRequestUtils;
 import util.IOUtils;
 
 public class RequestHandler extends Thread {
@@ -37,135 +28,91 @@ public class RequestHandler extends Thread {
         try (InputStream in = connection.getInputStream(); OutputStream out = connection.getOutputStream()) {
             // TODO 사용자 요청에 대한 처리는 이 곳에 구현하면 된다.
 
-			requestUrlHandler(new DataOutputStream(out), in);
+            BufferedReader br = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            String line = br.readLine();
+            String[] tokens = line.split(" ");
+            int contentLength = 0;
+
+            String url = tokens[1];
+            if(line == null){
+                return;
+            }
+            while(!"".equals(line)){
+                log.debug("header : {} ", line);
+                line = br.readLine();
+                if(line.contains("Content-Length")){
+                    contentLength = getContentLength(line);
+                }
+            }
+
+            if("/user/create".equals(url)) {
+                String body = IOUtils.readData(br, contentLength);
+                Map<String, String> params = HttpRequestUtils.parseQueryString(body);
+                User user = new User(params.get("userId"), params.get("password"), params.get("name"), params.get("email"));
+                DataOutputStream dos = new DataOutputStream(out);
+                response302Header(dos, "/index.html");
+                DataBase.addUser(user);
+            }else if("/user/login".equals(url)){
+                String body = IOUtils.readData(br, contentLength);
+                Map<String, String> params = HttpRequestUtils.parseQueryString(body);
+                User user = DataBase.findUserById(params.get("userId"));
+                if(user == null){
+                    responseResource(out, "/user/login_failed.html");
+                    return;
+                }
+                if(user.getPassword().equals(params.get("password"))){
+                    DataOutputStream dos = new DataOutputStream(out);
+                    response302LoginSuccessHeader(dos);
+                }else{
+                    responseResource(out, "/user/login_failed.html");
+                }
+
+            }else{
+                responseResource(out, url);
+            }
+             DataOutputStream dos = new DataOutputStream(out);
+             byte[] body = Files.readAllBytes(new File("./webapp"+url).toPath());
+             response200Header(dos, body.length);
+             responseBody(dos, body);
 
         } catch (IOException e) {
-            log.error(e.getMessage());           
+            log.error(e.getMessage());
         }
     }
 
-	private void requestUrlHandler(DataOutputStream dos, InputStream in) throws IOException {
-
-    	String httpStatus = "200";
-    	byte[] body = responseBodyMake(dos, in);
-		responseXXXHeader(dos, body.length, httpStatus);
-		responseBody(dos, body);
-
-	}
-
-	private byte[] responseBodyMake(DataOutputStream dos, InputStream in) throws IOException {
-
-		String getReq = getRequestUrl(in);
-		byte[] body = null;
-
-		if("/".equals(getReq.trim())){
-			body = "Hello World".getBytes();
-		}
-
-		if(!"/".equals(getReq.trim())){
-			try{
-				body = Files.readAllBytes(new File("./webapp"+getReq).toPath());
-			}catch(NoSuchFileException e){
-				String httpStatus = "302";
-				responseXXXHeader(dos, 0, httpStatus);
-				//response = true;
-			}
-		}
-
-		return body;
-	}
-
-	@SuppressWarnings("deprecation")
-	private User setUser(String url){
-    	String id ="";    	
-    	String pw ="";
-    	String nm ="";
-    	String email ="";
-    	
-    	String decUrl = URLDecoder.decode(url);
-    	int idx = decUrl.indexOf("?");
-    	String[] userArr = decUrl.substring(idx+1, decUrl.length()).split("&");
-    	
-    	id = userArr[0].replace("userId=", "");
-    	pw = userArr[1].replace("password=", "");
-    	nm = userArr[2].replace("name=", "");
-    	email = userArr[3].replace("email=", "");
-    	
-    	User user = new User(id, pw, nm, email); 	
-    	
-    	return user;
+    private void response302Header(DataOutputStream dos, String url) {
+            try{
+                dos.writeBytes("HTTP/1.1 302 Redirect \r\n");
+                dos.writeBytes("Location: "+url+" \r\n");
+                dos.writeBytes("\r\n");
+            }catch(IOException e){
+                log.error(e.getMessage());
+            }
     }
-    
-    private String getQueryString(BufferedReader br) throws IOException{
-    	
-    	String str = br.readLine();    	
-    	String conLen = "";
-    	String queryStr = "";
-    	
-    	while( str != null && !"".equals(str)){   	
-    		
-    		if(str.contains("Content-Length")){        			
-    			conLen = str.replace("Content-Length:", "").trim();    			
-    		}
-    		str = br.readLine();        		
-    	}  
-    	
-    	if(queryStr.isEmpty()){
-    		queryStr = IOUtils.readData(br, Integer.valueOf(conLen));
-    	}
-    	
-    	return queryStr;
+
+    private void response302LoginSuccessHeader(DataOutputStream dos) {
+        try{
+            dos.writeBytes("HTTP/1.1 302 Redirect \r\n");
+            dos.writeBytes("Set-Cookie : logined=true \r\n");
+            dos.writeBytes("Location: /index.html \r\n");
+            dos.writeBytes("\r\n");
+        }catch(IOException e){
+            log.error(e.getMessage());
+        }
     }
-    
-    private String getRequestUrl(BufferedReader br) throws IOException{
-       	String str = br.readLine();    	
-    	String reqUrl = "";
-    	
-    	while( str != null && !"".equals(str)){   		
-    		
-    		if(str.contains("GET ") || str.contains("POST ")){   			
-    			reqUrl = str;
-    			break;
-    		}
-    		
-    		str = br.readLine();        		
-    	}  
-    	    	
-    	return reqUrl;
+
+    private void responseResource(OutputStream out, String url) throws IOException {
+        DataOutputStream dos = new DataOutputStream(out);
+        byte[] body = Files.readAllBytes(new File("./webapp"+url).toPath( ));
+        response200Header(dos, body.length);
+        responseBody(dos,body);
     }
-    
-    private void setQueryStr(String reqUrl, String qs){
-    	if(reqUrl.contains("user/create")){
-    		DataBase.addUser(setUser(qs));
-    	}else if(reqUrl.contains("user/login")){
-    		//isValidUser()
-		}
-    }
-    
-    private String getRequestUrl(InputStream in) throws IOException{
-    	BufferedReader br = new BufferedReader(new InputStreamReader(in));
-    		
-    	String getReq = "";    	
-    	String queryStr = "";
-    	
-    	getReq = getRequestUrl(br);
-    	
-    	if(getReq.startsWith("GET ")){
-    		queryStr = getReq.substring(getReq.indexOf("?")+1);
-    	}    	
-    	if(getReq.startsWith("POST ")){
-    		queryStr = getQueryString(br);
-    	}
-    	
-    	setQueryStr(getReq, queryStr);
-    	
-    	String[] get = getReq.split(" ");
-    	
-    	if(get != null && get.length > 0){
-    		return get[1];
-    	}
-    	
-    	return "/";
+
+
+
+    private int getContentLength(String line) {
+        String[] headerTokens = line.split(":");
+        return Integer.parseInt(headerTokens[1].trim());
     }
 
     private void response200Header(DataOutputStream dos, int lengthOfBodyContent) {
@@ -177,25 +124,6 @@ public class RequestHandler extends Thread {
         } catch (IOException e) {
             log.error(e.getMessage());
         }
-    }
-
-	private void response302Header(DataOutputStream dos, int lengthOfBodyContent) {
-		try {
-			dos.writeBytes("HTTP/1.1 302 Found \r\n");
-			dos.writeBytes("Location: /index.html \r\n");
-			dos.writeBytes("\r\n");
-		} catch (IOException e) {
-			log.error(e.getMessage());
-		}
-	}
-
-    private void responseXXXHeader(DataOutputStream dos, int lengthOfBodyContent, String httpStatus) {
-
-    	if("200".equals(httpStatus)){
-    		response200Header( dos,  lengthOfBodyContent);
-    	}else if("302".equals(httpStatus)){
-			response302Header( dos,  lengthOfBodyContent);
-    	}
     }
 
     private void responseBody(DataOutputStream dos, byte[] body) {
